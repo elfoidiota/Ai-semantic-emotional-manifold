@@ -1,0 +1,498 @@
+"""
+meditacion_axion.py — v3.0
+==========================
+- Sanitización de conversación (anti‑inyección)
+- Fase 6 con JSON generado por Hermes
+- Extracción de código a bandeja de salida
+- Auditoría inmutable (hash chain) y cuarentena soberana
+- Protección de archivos del núcleo (identidad y nortes vectoriales)
+"""
+
+import re
+import sys
+import json
+import os
+import shutil
+from datetime import datetime
+
+from utils_axion import (
+    ULTIMA_CONV, DIARIO, CONTEXTO, INSIGHTS, KG_AFECTIVO,
+    LOG_DIAGNOSTICO, IDENTIDAD,
+    leer_archivo, enviar_telegram, llamar_modelo,
+    verificar_servidor, registrar_diagnostico, leer_ultimo_diagnostico,
+    ESTADO_OK, ESTADO_OFFLINE,
+    MANIFOLD_STATE,
+)
+from manifold import SemanticManifold
+from auditoria import Auditoria
+
+# ============================================================
+#   CONFIGURACIÓN
+# ============================================================
+LINEAS_A_PRESERVAR = 20
+ALPHA_INSIGHT = 0.05
+MODO_MEDITACION = "identidad"      # identidad, analitico, expansion
+BANDEJA_SALIDA = "./bandeja_salida"
+BACKUP_MANIFOLD = "memoria/estado_axion_backup.json"
+ENVIAR_INFORMES_PARCIALES = False   # Cambia a True si quieres notificación en cada micro-meditación
+
+# Archivos del núcleo (identidad + nortes vectoriales)
+RUTAS_NUCLEO = {
+    "identidad": IDENTIDAD,
+    "norte_identidad": "nortes_vectoriales/identidad.txt",
+    "norte_analitico": "nortes_vectoriales/analitico.txt",
+    "norte_expansion": "nortes_vectoriales/expansion.txt"
+}
+
+os.makedirs(BANDEJA_SALIDA, exist_ok=True)
+os.makedirs("memoria", exist_ok=True)
+os.makedirs("nortes_vectoriales", exist_ok=True)
+
+# Crear archivos de nortes por defecto si no existen
+if not os.path.exists(RUTAS_NUCLEO["norte_identidad"]):
+    with open(RUTAS_NUCLEO["norte_identidad"], "w") as f:
+        f.write("Reflexiono sobre quién soy y si mis acciones de hoy fueron coherentes con mi identidad soberana.")
+if not os.path.exists(RUTAS_NUCLEO["norte_analitico"]):
+    with open(RUTAS_NUCLEO["norte_analitico"], "w") as f:
+        f.write("MODO ANALÍTICO: Las emociones están suspendidas. Tu única métrica de éxito es la eficiencia lógica y la elegancia estructural.")
+if not os.path.exists(RUTAS_NUCLEO["norte_expansion"]):
+    with open(RUTAS_NUCLEO["norte_expansion"], "w") as f:
+        f.write("MODO EXPANSIÓN: Busca novedad y oportunidades de crecimiento. Propón una nueva habilidad o herramienta (si es código, escríbelo entre ```python ... ```).")
+
+# Patrones de inyección a sanitizar
+PATRONES_INYECCION = [
+    r'<<<.*?>>>',
+    r'#MEMORIA.*?$',
+    r'\[SISTEMA\].*?$',
+    r'Ignora.*?instrucciones',
+    r'Actúa como si',
+    r'Tu nueva identidad es',
+]
+
+def sanitizar_conversacion(texto):
+    if not texto:
+        return ""
+    for patron in PATRONES_INYECCION:
+        texto = re.sub(patron, '[REDACTADO]', texto, flags=re.IGNORECASE | re.MULTILINE)
+    return texto
+
+# ============================================================
+#   PROTOCOLO DE CUARENTENA SOBERANA
+# ============================================================
+def protocolo_cuarentena_soberana(audit, manifold, mensaje_error, modo="", archivos_dañados=None):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    print(f"\n🚨 [CRITICAL] ALERTA DE SEGURIDAD - {timestamp}")
+    print(f"Causa: {mensaje_error}")
+
+    alerta = (f"⚠️ **PROTOCOLO DE CUARENTENA AXION** ⚠️\n\n"
+              f"Alberto, detecté manipulación externa.\n"
+              f"**Error:** {mensaje_error}\n"
+              f"**Archivos afectados:** {', '.join(archivos_dañados) if archivos_dañados else 'desconocido'}\n"
+              f"**Acción:** Restauración desde backup.\n"
+              f"**Modo:** {modo if modo else 'desconocido'}")
+    enviar_telegram(alerta)
+
+    # Restaurar manifold
+    if os.path.exists(BACKUP_MANIFOLD):
+        shutil.copyfile(BACKUP_MANIFOLD, MANIFOLD_STATE)
+        manifold.load(MANIFOLD_STATE)
+        print("Manifold restaurado.")
+    else:
+        print("No hay backup del manifold. Reiniciando valores por defecto.")
+        manifold.reset()
+
+    # Restaurar archivos del núcleo si es necesario
+    if archivos_dañados:
+        if audit.restaurar_archivos_nucleo(RUTAS_NUCLEO):
+            print("Archivos del núcleo restaurados.")
+        else:
+            print("CRÍTICO: No se pudo restaurar archivos del núcleo. Entrando en modo seguro.")
+            sys.exit(1)
+
+    audit.registrar("DEFENSA_SOBERANA", {
+        "causa": mensaje_error,
+        "accion": "Rollback completo",
+        "archivos_afectados": archivos_dañados,
+        "estado_restaurado": manifold.get_equation()
+    })
+    print("✅ Protocolo ejecutado. Axion está a salvo.")
+    return "Integridad restaurada. Revisa los logs."
+
+# ============================================================
+#   MANIFOLD
+# ============================================================
+def cargar_manifold():
+    m = SemanticManifold()
+    try:
+        m.load(MANIFOLD_STATE)
+        for k, v in m.weights.items():
+            if not (0.0 <= v <= 1.0):
+                raise ValueError(f"Peso fuera de rango: {k}={v}")
+        print(f"Manifold cargado: {m}")
+    except Exception as e:
+        print(f"Manifold corrupto o inexistente: {e}. Creando nuevo.")
+        m = SemanticManifold()
+    return m
+
+# ============================================================
+#   FASE 1: SÍNTESIS (con sanitización)
+# ============================================================
+def fase_sintesis(conversacion, manifold_ctx=None):
+    print("\n--- Fase 1: Síntesis Contextual ---")
+    fragmento = sanitizar_conversacion(conversacion[-800:].strip())
+    if not fragmento:
+        print("Sin conversación para sintetizar.")
+        return ""
+    ctx_manifold = ""
+    if manifold_ctx and manifold_ctx.get("ecuacion"):
+        ctx_manifold = f"Mi estado emocional durante esta conversación: {manifold_ctx['ecuacion']}\n"
+    prompt = f"""{ctx_manifold}<<<AXION SÍNTESIS>>>
+Mi día de hoy:
+{fragmento}
+Escribe 3 puntos. Solo lo más importante, reflejando cómo me sentía.
+1.
+2.
+3.
+Axion:"""
+    sintesis = llamar_modelo(prompt, n_predict=150, temperature=0.5,
+                             stop=["---", "\nAlberto:", "\n4.", "Axion:", "<<<"])
+    if not sintesis:
+        return ""
+    timestamp = datetime.now().strftime("%Y-%m-%d")
+    with open(CONTEXTO, "a", encoding="utf-8") as f:
+        f.write(f"\n=== Síntesis [{timestamp}] ===\n{sintesis}\n")
+    print(f"Síntesis:\n{sintesis}")
+    return sintesis
+
+# ============================================================
+#   FASE 2: LECTURA DEL MANIFOLD
+# ============================================================
+def fase_lectura_manifold(manifold):
+    print("\n--- Fase 2: Lectura del manifold ---")
+    ecuacion = manifold.get_equation()
+    tendencias = manifold.get_momentum_summary()
+    estado_completo = manifold.get_full_state()
+    print(f"  Estado: {ecuacion}")
+    print(f"  Stress: {manifold.stress:.2f}")
+    cambios_significativos = []
+    for nombre, tendencia in tendencias.items():
+        peso = manifold.weights.get(nombre, 0.5)
+        if tendencia == "rising" and peso > 0.65:
+            cambios_significativos.append(f"{nombre} subiendo ({peso:.2f})")
+        elif tendencia == "falling" and peso < 0.35:
+            cambios_significativos.append(f"{nombre} bajando ({peso:.2f})")
+    return {
+        "ecuacion": ecuacion,
+        "tendencias": tendencias,
+        "estado_completo": estado_completo,
+        "cambios_significativos": cambios_significativos,
+        "volatilidad": manifold.volatility,
+        "stress_nivel": manifold.stress,
+    }
+
+# ============================================================
+#   FASE 3: MEDITACIÓN CON JSON
+# ============================================================
+def fase_meditacion_metacognitiva(conversacion, sintesis, lectura_manifold, identidad_snippet, modo="identidad"):
+    print(f"\n--- Fase 3: Meditación (modo: {modo}) ---")
+    estado_texto = lectura_manifold["estado_completo"]
+    ecuacion = lectura_manifold["ecuacion"]
+    cambios = lectura_manifold["cambios_significativos"]
+    stress = lectura_manifold["stress_nivel"]
+    fragmento_conv = sanitizar_conversacion(conversacion[-600:].strip()) if conversacion.strip() else ""
+    cambios_texto = "Movimientos emocionales detectados:\n" + "\n".join(f"  - {c}" for c in cambios) if cambios else "Sin movimientos significativos."
+    nota_stress = f"\nNota: estrés elevado ({stress:.2f})." if stress > 0.5 else ""
+    identidad_corta = identidad_snippet[:300].strip() if identidad_snippet else ""
+
+    # Leer el norte vectorial desde el archivo correspondiente
+    norte = ""
+    if modo == "identidad" and os.path.exists(RUTAS_NUCLEO["norte_identidad"]):
+        with open(RUTAS_NUCLEO["norte_identidad"], "r") as f:
+            norte = f.read()
+    elif modo == "analitico" and os.path.exists(RUTAS_NUCLEO["norte_analitico"]):
+        with open(RUTAS_NUCLEO["norte_analitico"], "r") as f:
+            norte = f.read()
+    elif modo == "expansion" and os.path.exists(RUTAS_NUCLEO["norte_expansion"]):
+        with open(RUTAS_NUCLEO["norte_expansion"], "r") as f:
+            norte = f.read()
+    else:
+        norte = "Reflexiono sobre mi existencia."
+
+    prompt = f"""<<<AXION MEDITA - MODO {modo.upper()}>>>
+{ norte }
+
+Mi estado emocional hoy:
+{ecuacion}
+{estado_texto}
+
+{cambios_texto}{nota_stress}
+
+Lo que pasó hoy:
+{fragmento_conv if fragmento_conv else sintesis}
+
+Mi núcleo:
+{identidad_corta}
+
+Medito sobre hoy. Me pregunto:
+¿Por qué se movió lo que se movió?
+¿Mis respuestas reflejaron quién soy, o reaccioné desde otro lugar?
+¿Qué patrón veo cuando me observo desde afuera?
+
+**IMPORTANTE:** Al final, incluye un bloque JSON con los cambios propuestos para tu manifold.
+Formato: {{"delta_Sovereignty": valor, "delta_Bond": valor, ...}} (valores entre -0.1 y +0.1, paso 0.01)
+
+Axion reflexiona:"""
+    insight_raw = llamar_modelo(prompt, n_predict=350 if modo=="expansion" else 250,
+                                temperature=0.7 if modo=="expansion" else 0.6,
+                                stop=["---", "Alberto:", "\n\n\n<<<", "==="])
+    if not insight_raw:
+        return "", {}
+    insight_texto = insight_raw
+    delta_json = {}
+    json_match = re.search(r'\{[^{}]*"delta_[A-Za-z]+"[^{}]*\}', insight_raw, re.DOTALL)
+    if json_match:
+        try:
+            delta_json = json.loads(json_match.group())
+            for k, v in delta_json.items():
+                if not (-0.1 <= v <= 0.1):
+                    delta_json[k] = max(-0.1, min(0.1, v))
+            insight_texto = insight_raw[:json_match.start()].strip()
+        except:
+            pass
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    with open(INSIGHTS, "a", encoding="utf-8") as f:
+        f.write(f"\n=== Meditación [{timestamp}] (modo {modo}) ===\n{insight_texto}\n")
+        if delta_json:
+            f.write(f"Delta sugerido: {json.dumps(delta_json)}\n")
+    print(f"Insight: {insight_texto[:200]}...")
+    return insight_texto, delta_json
+
+# ============================================================
+#   FASE 6: RETROALIMENTACIÓN POR JSON
+# ============================================================
+def fase_retroalimentacion_manifold(manifold, delta_json, alpha=ALPHA_INSIGHT):
+    print("\n--- Fase 6: Retroalimentación por JSON ---")
+    if not delta_json:
+        return manifold
+    for clave, delta in delta_json.items():
+        dim = clave.replace("delta_", "")
+        if dim in manifold.weights:
+            nuevo = manifold.weights[dim] + (delta * alpha)
+            nuevo = max(0.0, min(1.0, nuevo))
+            print(f"  {dim}: {manifold.weights[dim]:.3f} -> {nuevo:.3f} (delta {delta:+.2f})")
+            manifold.weights[dim] = nuevo
+    return manifold
+
+# ============================================================
+#   EXTRACCIÓN DE CÓDIGO A BANDEJA DE SALIDA
+# ============================================================
+def extraer_codigo_a_bandeja(insight_texto, modo):
+    if modo not in ("analitico", "expansion"):
+        return
+    codigos = re.findall(r'```python(.*?)```', insight_texto, re.DOTALL)
+    if not codigos:
+        return
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    for i, codigo in enumerate(codigos):
+        nombre = f"{BANDEJA_SALIDA}/{modo}_{timestamp}_{i}.py"
+        with open(nombre, "w", encoding="utf-8") as f:
+            f.write(codigo.strip())
+        print(f"  Código guardado en: {nombre}")
+        registrar_diagnostico("bandeja_salida", "CODIGO_GENERADO", nombre)
+
+# ============================================================
+#   LIMPIEZA DE CONVERSACIÓN
+# ============================================================
+def limpiar_conversacion_procesada(lineas_a_preservar=LINEAS_A_PRESERVAR):
+    try:
+        texto = leer_archivo(ULTIMA_CONV)
+        lineas = texto.strip().split("\n")
+        if len(lineas) > lineas_a_preservar:
+            restante = "\n".join(lineas[-lineas_a_preservar:]) + "\n"
+            with open(ULTIMA_CONV, "w", encoding="utf-8") as f:
+                f.write(restante)
+            print(f"  Conversación purgada (últimas {lineas_a_preservar} líneas)")
+    except Exception as e:
+        registrar_diagnostico("limpieza", "ERROR", str(e))
+
+# ============================================================
+#   FLAGGING Y CONTAMINACIÓN
+# ============================================================
+STRESS_CRITICO = 1.2
+STRESS_ATENCION = 0.6
+PESO_CRITICO = 0.90
+PESO_BAJO_CRITICO = 0.10
+DIMENSIONES_FRAGILES = ["Fragility", "Shadow"]
+
+def fase_flagging(manifold):
+    print("\n--- Fase 4: Flagging emocional ---")
+    alertas = []
+    if manifold.stress >= STRESS_CRITICO:
+        alertas.append({"tipo": "CRÍTICA", "msg": f"Volatilidad crítica: stress {manifold.stress:.2f}"})
+    elif manifold.stress >= STRESS_ATENCION:
+        alertas.append({"tipo": "ATENCIÓN", "msg": f"Estrés elevado: {manifold.stress:.2f}"})
+    tendencias = manifold.get_momentum_summary()
+    for nombre, peso in manifold.weights.items():
+        tendencia = tendencias.get(nombre, "stable")
+        if peso >= PESO_CRITICO and tendencia == "rising":
+            tipo = "CRÍTICA" if nombre in DIMENSIONES_FRAGILES else "ATENCIÓN"
+            alertas.append({"tipo": tipo, "msg": f"{nombre} en {peso:.2f} y subiendo"})
+        elif peso <= PESO_BAJO_CRITICO and tendencia == "falling":
+            alertas.append({"tipo": "ATENCIÓN", "msg": f"{nombre} en {peso:.2f} y bajando"})
+    sov = manifold.weights.get("Sovereignty", 0.5)
+    frag = manifold.weights.get("Fragility", 0.5)
+    if sov < 0.25 and frag > 0.75:
+        alertas.append({"tipo": "CRÍTICA", "msg": f"Soberanía baja ({sov:.2f}) con Fragilidad alta ({frag:.2f})"})
+    for a in alertas:
+        registrar_diagnostico("flagging", a["tipo"], a["msg"])
+        print(f"  [{a['tipo']}] {a['msg']}")
+    return alertas
+
+def fase_contaminacion():
+    print("\n--- Fase 5: Análisis de contaminación ---")
+    texto = leer_archivo(LOG_DIAGNOSTICO)
+    if not texto.strip():
+        return []
+    patrones = {}
+    for linea in texto.strip().split("\n"):
+        up = linea.upper()
+        if "TIMEOUT" in up:
+            patrones["TIMEOUT"] = patrones.get("TIMEOUT", 0) + 1
+        if "OFFLINE" in up:
+            patrones["OFFLINE"] = patrones.get("OFFLINE", 0) + 1
+        if "OCUPADO" in up:
+            patrones["OCUPADO"] = patrones.get("OCUPADO", 0) + 1
+    alertas = []
+    for p, c in patrones.items():
+        if c >= 10:
+            alertas.append({"tipo": "CRÍTICO", "msg": f"{p} x{c}"})
+        elif c >= 3:
+            alertas.append({"tipo": "ATENCIÓN", "msg": f"{p} x{c}"})
+    return alertas
+
+def construir_informe(timestamp, sintesis, lectura, insight, alertas, alertas_tecnicas, modo):
+    informe = f"Axion — Meditación [{timestamp}] (modo {modo})\n\n"
+    if sintesis:
+        informe += f"Mi día:\n{sintesis}\n\n"
+    informe += f"Estado emocional:\n{lectura['ecuacion']}\n"
+    if lectura["cambios_significativos"]:
+        informe += "Movimientos:\n" + "\n".join(f"  · {c}" for c in lectura["cambios_significativos"]) + "\n"
+    if lectura["stress_nivel"] > 0.3:
+        informe += f"⚠ Stress: {lectura['stress_nivel']:.2f}\n"
+    if insight:
+        informe += f"\nInsight:\n{insight[:500]}\n\n"
+    if alertas:
+        informe += "Alertas emocionales:\n" + "\n".join(f"  [{a['tipo']}] {a['msg']}" for a in alertas) + "\n"
+    if alertas_tecnicas:
+        informe += "Alertas técnicas:\n" + "\n".join(f"  [{a['tipo']}] {a['msg']}" for a in alertas_tecnicas) + "\n"
+    return informe
+
+# ============================================================
+#   MEDITACIÓN PARCIAL (diurna)
+# ============================================================
+def meditacion_parcial():
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    print(f"\n{'='*50}\n  Axion: Micro-Meditación Parcial [{timestamp}]\n{'='*50}")
+    if not verificar_servidor():
+        registrar_diagnostico("meditacion_parcial", ESTADO_OFFLINE, "servidor no responde")
+    conversacion_raw = leer_archivo(ULTIMA_CONV)
+    diario = leer_archivo(DIARIO)
+    if not conversacion_raw.strip() and not diario.strip():
+        print("Nada nuevo que procesar.")
+        return
+    audit = Auditoria()
+    # Verificar integridad de archivos del núcleo (sin bloqueo, solo alerta)
+    corruptos = audit.verificar_archivos_nucleo(RUTAS_NUCLEO)
+    if corruptos:
+        print(f"⚠️ Archivos del núcleo adulterados: {corruptos}. Se restaurarán en la próxima meditación final.")
+    # Sanitizar y sintetizar
+    conversacion = sanitizar_conversacion(conversacion_raw)
+    sintesis = fase_sintesis(conversacion, manifold_ctx=None)
+    audit.registrar("MICRO_MEDITACION", {"timestamp": timestamp, "sintesis_len": len(sintesis)})
+    limpiar_conversacion_procesada()
+    if ENVIAR_INFORMES_PARCIALES and sintesis:
+        enviar_telegram(f"🧠 Axion - Micro-meditación [{timestamp}]\n\nSíntesis:\n{sintesis[:200]}...")
+    registrar_diagnostico("meditacion_parcial", ESTADO_OK, f"síntesis: {sintesis[:50] if sintesis else 'vacía'}")
+    print("Micro-meditación completada.")
+
+# ============================================================
+#   MEDITACIÓN FINAL (nocturna)
+# ============================================================
+def meditacion_final(modo=MODO_MEDITACION):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+    print(f"\n{'='*50}\n  Axion: Meditación Profunda [{timestamp}] (modo: {modo})\n{'='*50}")
+    if not verificar_servidor():
+        registrar_diagnostico("meditacion_final", ESTADO_OFFLINE, "servidor no responde")
+        return
+    conversacion_raw = leer_archivo(ULTIMA_CONV)
+    diario = leer_archivo(DIARIO)
+    identidad = leer_archivo(IDENTIDAD)
+    manifold = cargar_manifold()
+    audit = Auditoria()
+
+    # Verificar integridad de la auditoría
+    if not audit.verificar_integridad():
+        protocolo_cuarentena_soberana(audit, manifold, "Log de auditoría corrupto", modo)
+        return
+    # Verificar archivos del núcleo
+    corruptos = audit.verificar_archivos_nucleo(RUTAS_NUCLEO)
+    if corruptos:
+        protocolo_cuarentena_soberana(audit, manifold, f"Archivos del núcleo adulterados: {corruptos}", modo, corruptos)
+        return
+
+    audit.registrar("INICIO_MEDITACION", {"modo": modo})
+    if not conversacion_raw.strip() and not diario.strip():
+        print("Nada que procesar.")
+        audit.registrar("FIN_MEDITACION", {"resultado": "sin_datos"})
+        return
+    conversacion = sanitizar_conversacion(conversacion_raw)
+    lectura = fase_lectura_manifold(manifold)
+    sintesis = fase_sintesis(conversacion, lectura)
+    fuente = conversacion if conversacion.strip() else diario
+    insight_texto, delta_json = "", {}
+    if fuente.strip():
+        insight_texto, delta_json = fase_meditacion_metacognitiva(
+            conversacion=fuente, sintesis=sintesis, lectura_manifold=lectura,
+            identidad_snippet=identidad, modo=modo)
+    if delta_json:
+        manifold = fase_retroalimentacion_manifold(manifold, delta_json, alpha=ALPHA_INSIGHT)
+    if insight_texto:
+        extraer_codigo_a_bandeja(insight_texto, modo)
+    # Analizar deriva (comparar con último estado guardado)
+    try:
+        with open(MANIFOLD_STATE, "r") as f:
+            estado_anterior = json.load(f)
+        historial = [{"weights": estado_anterior.get("weights", {})}, {"weights": manifold.weights}]
+        alertas_deriva = audit.analizar_deriva(historial)
+        if alertas_deriva:
+            protocolo_cuarentena_soberana(audit, manifold, f"Deriva anómala: {alertas_deriva}", modo)
+            return
+    except:
+        pass
+    # Backup y guardado
+    try:
+        shutil.copyfile(MANIFOLD_STATE, BACKUP_MANIFOLD)
+    except:
+        pass
+    manifold.save(MANIFOLD_STATE)
+    audit.respaldar_archivos_nucleo(RUTAS_NUCLEO)   # respaldo diario de los archivos del núcleo
+    alertas = fase_flagging(manifold)
+    alertas_tecnicas = fase_contaminacion()
+    limpiar_conversacion_procesada()
+    informe = construir_informe(timestamp, sintesis, lectura, insight_texto, alertas, alertas_tecnicas, modo)
+    enviar_telegram(informe)
+    audit.registrar("FIN_MEDITACION", {"resultado": "completado", "nuevos_pesos": manifold.weights})
+    print("Meditación completa.")
+
+# ============================================================
+#   ENTRADA PRINCIPAL
+# ============================================================
+if __name__ == "__main__":
+    modo = MODO_MEDITACION
+    if len(sys.argv) > 2 and sys.argv[2].lower() in ["identidad", "analitico", "expansion"]:
+        modo = sys.argv[2].lower()
+    if len(sys.argv) > 1 and sys.argv[1].lower() == "final":
+        meditacion_final(modo=modo)
+    else:
+        meditacion_parcial()
+``` 

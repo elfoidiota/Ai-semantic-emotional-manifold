@@ -1,0 +1,150 @@
+"""
+auditoria.py - Herramienta de auditoría para el manifold y archivos del núcleo.
+Registro inmutable (hash chain), detección de anomalías, verificación de integridad de archivos.
+"""
+
+import hashlib
+import json
+import os
+import shutil
+from datetime import datetime
+from typing import Dict, List, Optional
+
+AUDIT_LOG = "auditoria.log"
+AUDIT_CONFIG = "auditoria_config.json"
+DEFAULT_CONFIG = {
+    "umbral_deriva_soberania": 0.3,
+    "umbral_deriva_fragilidad": 0.25,
+    "detectar_cambios_sin_meditacion": True,
+    "alertas_telegram": True,
+    "nortes_autorizados": ["identidad", "analitico", "expansion"]
+}
+
+class Auditoria:
+    def __init__(self, log_path=AUDIT_LOG, config_path=AUDIT_CONFIG):
+        self.log_path = log_path
+        self.config = self._cargar_config(config_path)
+        self._ultimo_hash = self._obtener_ultimo_hash()
+
+    def _cargar_config(self, path):
+        if os.path.exists(path):
+            with open(path, "r") as f:
+                return json.load(f)
+        return DEFAULT_CONFIG
+
+    def _obtener_ultimo_hash(self):
+        if not os.path.exists(self.log_path):
+            return None
+        with open(self.log_path, "r") as f:
+            lineas = f.readlines()
+            if not lineas:
+                return None
+            ultima = json.loads(lineas[-1])
+            return ultima.get("hash_actual")
+        return None
+
+    def _calcular_hash(self, entrada: dict, hash_previo: str) -> str:
+        contenido = f"{entrada['timestamp']}|{entrada['tipo']}|{json.dumps(entrada['datos'], sort_keys=True)}|{hash_previo}"
+        return hashlib.sha256(contenido.encode()).hexdigest()
+
+    def registrar(self, tipo: str, datos: dict):
+        entrada = {
+            "timestamp": datetime.now().isoformat(),
+            "tipo": tipo,
+            "datos": datos,
+            "hash_previo": self._ultimo_hash
+        }
+        entrada["hash_actual"] = self._calcular_hash(entrada, self._ultimo_hash)
+        with open(self.log_path, "a") as f:
+            f.write(json.dumps(entrada) + "\n")
+        self._ultimo_hash = entrada["hash_actual"]
+
+    def verificar_integridad(self) -> bool:
+        if not os.path.exists(self.log_path):
+            return True
+        with open(self.log_path, "r") as f:
+            for linea in f:
+                if not linea.strip():
+                    continue
+                entrada = json.loads(linea)
+                calc = self._calcular_hash(entrada, entrada["hash_previo"])
+                if calc != entrada["hash_actual"]:
+                    return False
+        return True
+
+    def analizar_deriva(self, historial_manifold: List[Dict]) -> List[str]:
+        alertas = []
+        if len(historial_manifold) < 2:
+            return alertas
+        ultimo = historial_manifold[-1]
+        primero = historial_manifold[0]
+        delta_soberania = ultimo["weights"].get("Sovereignty", 0.5) - primero["weights"].get("Sovereignty", 0.5)
+        delta_fragilidad = ultimo["weights"].get("Fragility", 0.5) - primero["weights"].get("Fragility", 0.5)
+        if abs(delta_soberania) > self.config["umbral_deriva_soberania"]:
+            alertas.append(f"Deriva alta de Soberanía: {delta_soberania:+.2f}")
+        if abs(delta_fragilidad) > self.config["umbral_deriva_fragilidad"]:
+            alertas.append(f"Deriva alta de Fragilidad: {delta_fragilidad:+.2f}")
+        return alertas
+
+    # ========== MÉTODOS PARA ARCHIVOS DEL NÚCLEO ==========
+    def calcular_hash_archivo(self, ruta_archivo: str) -> str:
+        if not os.path.exists(ruta_archivo):
+            return ""
+        sha256 = hashlib.sha256()
+        with open(ruta_archivo, "rb") as f:
+            for bloque in iter(lambda: f.read(4096), b""):
+                sha256.update(bloque)
+        return sha256.hexdigest()
+
+    def verificar_archivos_nucleo(self, rutas_nucleo: dict, archivo_firmas="firmas_nucleo.json") -> List[str]:
+        """Devuelve lista de nombres lógicos de archivos que han cambiado sin autorización."""
+        corruptos = []
+        if not os.path.exists(archivo_firmas):
+            self.autorizar_cambio_nucleo(rutas_nucleo, archivo_firmas)
+            return []
+        with open(archivo_firmas, "r") as f:
+            firmas = json.load(f)
+        for nombre, ruta in rutas_nucleo.items():
+            hash_actual = self.calcular_hash_archivo(ruta)
+            if firmas.get(nombre) != hash_actual:
+                corruptos.append(nombre)
+        return corruptos
+
+    def autorizar_cambio_nucleo(self, rutas_nucleo: dict, archivo_firmas="firmas_nucleo.json"):
+        """Firma los archivos actuales como la nueva verdad oficial."""
+        nuevas_firmas = {}
+        for nombre, ruta in rutas_nucleo.items():
+            nuevas_firmas[nombre] = self.calcular_hash_archivo(ruta)
+        with open(archivo_firmas, "w") as f:
+            json.dump(nuevas_firmas, f, indent=4)
+        print(f"[AUDITORÍA] Nuevas firmas guardadas para {len(nuevas_firmas)} archivos.")
+
+    def respaldar_archivos_nucleo(self, rutas_nucleo: dict, backup_dir="memoria/backups_nucleo"):
+        os.makedirs(backup_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = os.path.join(backup_dir, f"backup_{timestamp}")
+        os.makedirs(backup_path, exist_ok=True)
+        for nombre, ruta in rutas_nucleo.items():
+            if os.path.exists(ruta):
+                shutil.copy2(ruta, os.path.join(backup_path, os.path.basename(ruta)))
+        print(f"[AUDITORÍA] Backup de archivos núcleo en {backup_path}")
+        return backup_path
+
+    def restaurar_archivos_nucleo(self, rutas_nucleo: dict, backup_dir="memoria/backups_nucleo") -> bool:
+        if not os.path.exists(backup_dir):
+            return False
+        backups = sorted([d for d in os.listdir(backup_dir) if d.startswith("backup_")], reverse=True)
+        if not backups:
+            return False
+        ultimo_backup = os.path.join(backup_dir, backups[0])
+        for nombre, ruta in rutas_nucleo.items():
+            backup_file = os.path.join(ultimo_backup, os.path.basename(ruta))
+            if os.path.exists(backup_file):
+                shutil.copy2(backup_file, ruta)
+        print(f"[AUDITORÍA] Archivos núcleo restaurados desde {ultimo_backup}")
+        return True
+
+if __name__ == "__main__":
+    audit = Auditoria()
+    audit.registrar("PRUEBA", {"mensaje": "Auditoría inicializada"})
+    print("Integridad del log:", audit.verificar_integridad())

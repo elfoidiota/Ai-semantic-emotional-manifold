@@ -1,0 +1,11 @@
+"""
+autorizar_cambios.py - Ejecutar después de editar identidad_axion.txt o los nortes vectoriales.
+Actualiza las firmas en firmas_nucleo.json para que los nuevos contenidos sean la base oficial.
+"""
+
+from auditoria import Auditoria
+from meditacion_axion import RUTAS_NUCLEO
+
+audit = Auditoria()
+audit.autorizar_cambio_nucleo(RUTAS_NUCLEO)
+print("✅ Firmas actualizadas. Los cambios ahora son la base oficial.")
