@@ -41,6 +41,9 @@ def iniciar(registro: str, diagnostico: str) -> None:
 
 
 def guardar_diagnostico() -> None:
+    llamadas = {k: v.resumen_llamadas() for k, v in C.items() if hasattr(v, "resumen_llamadas")}
+    if llamadas:
+        DIAG["llamadas_gemini"] = llamadas
     with open(_RUTAS["diagnostico"], "w", encoding="utf-8") as f:
         json.dump({"estado": ESTADO, **DIAG}, f, indent=1, ensure_ascii=False, default=str)
 

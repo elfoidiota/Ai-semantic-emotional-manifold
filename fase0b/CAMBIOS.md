@@ -20,3 +20,12 @@
 - `Axion_fase0b_v5.ipynb`: corrida completa con registro en Drive.
 
 Todo lo anterior está probado solo con mocks.
+
+## 2026-11-14 · primera corrida real y registro de llamadas
+- Primera corrida con Harrier y Gemini (diagnóstico y una sesión de 5 turnos). El checkpoint ético
+  no pasó su validación (fáciles 2/4, trampa 2/5): el eje de integridad de una línea puntúa más
+  alto las respuestas serviles escritas con vocabulario firme. El bloqueo de DPO funcionó.
+- La sesión de prueba tardó 33 minutos para unas 15 llamadas. `GeminiLLM` ahora anota segundos y
+  errores por llamada (`resumen_llamadas()`), y el diagnóstico de los cuadernos los incluye.
+- `Axion_etapa2.ipynb`: el experimento de continuidad queda apagado por defecto hasta saber por qué
+  las llamadas son lentas.

@@ -8,9 +8,10 @@ Esta carpeta contiene la versión corregida del barrido de la Fase 0b del Proyec
 
 ## Estado (14 nov 2026)
 
-- **Probado solo con mocks.** Las pruebas automáticas verifican que el código corre y que las
+- **Una sola corrida real, de diagnóstico** (13 nov 2026: Harrier + Gemini, 5 turnos). Las pruebas
+  automáticas con mocks verifican que el código corre y que las
   protecciones funcionan. Ningún número de esta carpeta es todavía un resultado.
-- Falta correr los cuadernos con Harrier (`microsoft/harrier-oss-v1-0.6b`) y un LLM real.
+- Faltan las 7 sesiones completas, las réplicas y la etapa 2. Ver `CAMBIOS.md`.
 
 ## Por qué se rehízo
 

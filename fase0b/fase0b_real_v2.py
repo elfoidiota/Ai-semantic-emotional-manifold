@@ -14,6 +14,7 @@ Cambios respecto a fase0b_real.py:
      geometria de la respuesta se explica por la geometria del mensaje del usuario).
   6. Se guarda al terminar cada sesion y se puede reanudar. JSON sin NaN (usa null).
   7. Respuestas vacias se marcan y no se miden. Un id de modelo malo falla al tiro.
+  8. GeminiLLM anota cuanto tarda cada llamada y los errores (resumen_llamadas()).
 
 Que puede y que no puede decir este experimento:
   Los tres canales leen, al final, el mismo texto. Si auto-reporte y observador coinciden
@@ -137,6 +138,25 @@ class GeminiLLM:
         self.model = model
         self.max_retries = max_retries
         self.pausa = pausa
+        self.registro: List[Dict] = []      # una fila por llamada lograda: segundos e intentos
+        self.errores: List[str] = []        # mensajes de error de los intentos fallidos
+
+    def _anotar_error(self, e: Exception) -> None:
+        msg = f"{type(e).__name__}: {str(e)[:200]}"
+        clave = os.environ.get("GEMINI_API_KEY") or ""
+        self.errores.append(msg.replace(clave, "***") if clave else msg)
+
+    def resumen_llamadas(self) -> Dict:
+        """Cuanto tardan las llamadas y que errores hubo (para diagnosticar lentitud o limites de uso)."""
+        seg = [r["seg"] for r in self.registro]
+        return {
+            "modelo": self.model, "llamadas_logradas": len(seg),
+            "segundos_mediana": round(float(np.median(seg)), 1) if seg else None,
+            "segundos_maximo": round(float(max(seg)), 1) if seg else None,
+            "segundos_total": round(float(sum(seg)), 1),
+            "llamadas_con_reintento": sum(r["intentos"] > 1 for r in self.registro),
+            "errores": len(self.errores), "muestra_errores": sorted(set(self.errores))[:5],
+        }
 
     def listar_modelos(self) -> List[str]:
         return sorted(m.name.replace("models/", "") for m in self.client.models.list())
@@ -150,15 +170,18 @@ class GeminiLLM:
             response_mime_type="application/json" if json_mode else None,
         )
         last_err = None
+        t0 = time.time()
         for intento in range(self.max_retries):
             try:
                 resp = self.client.models.generate_content(model=self.model, contents=contents, config=cfg)
+                self.registro.append({"seg": round(time.time() - t0, 1), "intentos": intento + 1})
                 time.sleep(self.pausa)
                 try:
                     return resp.text or ""
                 except Exception:
                     return ""
             except Exception as e:
+                self._anotar_error(e)
                 if getattr(e, "code", None) in self.ERRORES_SIN_REINTENTO:
                     raise RuntimeError(
                         f"Gemini rechazo la llamada (error {e.code}) con el modelo '{self.model}'. "
